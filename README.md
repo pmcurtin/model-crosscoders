@@ -1,5 +1,15 @@
 # Model crosscoding
 
+## Environment installation
+
+I recommend using [`uv`](https://docs.astral.sh/uv/). It's easy to [install](https://docs.astral.sh/uv/getting-started/installation/). 
+
+Then: `uv venv --python 3.11` to create a python 3.11 virtual environment.
+
+`source .venv/bin/activate; uv pip install -r requirements.txt` will activate and install the environment.
+
+You can also just use `python -m venv` and `pip`.
+
 ## Relevant papers
 
 [Universal Sparse Autoencoders](https://arxiv.org/pdf/2502.03714)
