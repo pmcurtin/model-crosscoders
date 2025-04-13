@@ -7,27 +7,24 @@ import tqdm
 
 # https://github.com/neelnanda-io/Crosscoders/blob/3adc7eb23a5a56f12557d2c6c206f0aa688bdbd3/crosscoders/utils.py#L500
 
+
 # some trainer class.
 # we should use weights & biases for experiment tracking
-class CrossCoderTrainer():
-
-    def __init__(self, modelA, modelB, use_wandb=True):
-
-        self.cfg = default_cfg # populate this from args
+class CrossCoderTrainer:
+    def __init__(self, modelA, modelB, dataloader_a, dataloader_b, use_wandb=True):
+        self.cfg = default_cfg  # populate this from args
         self.total_steps = self.cfg["num_tokens"] // self.cfg["batch_size"]
         self.step_counter = 0
 
-        dataloader = ...
-
         self.crosscoder = CrossCoder(self.cfg, modelA, modelB)
-        self.buffer = ResidualBuffer(self.cfg, modelA, modelB, dataloader)
+        self.buffer = ResidualBuffer(self.cfg, modelA, modelB, dataloader_a, dataloader_b)
 
         self.optimizer = torch.optim.AdamW(
-            self.crosscoder.parameters(), 
-            lr=self.cfg["lr"], 
-            betas=(self.cfg["beta1"], self.cfg["beta2"])
+            self.crosscoder.parameters(),
+            lr=self.cfg["lr"],
+            betas=(self.cfg["beta1"], self.cfg["beta2"]),
         )
-        
+
         self.scheduler = torch.optim.lr_scheduler.LambdaLR(
             self.optimizer, self.lr_lambda
         )
@@ -66,7 +63,6 @@ class CrossCoderTrainer():
 
         self.step_counter += 1
         return loss_dict
-
 
     def log(self, loss_dict):
         wandb.log(loss_dict, step=self.step_counter)
