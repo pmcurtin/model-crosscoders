@@ -1,24 +1,25 @@
 default_cfg = {
     "seed": 51,
     "batch_size": 2048,
-    "buffer_mult": 512,
+    "buffer_mult": 512,  # 512,
     "lr": 2e-5,
-    "num_tokens": int(4e8),
-    "l1_coeff": 2,
+    "num_tokens": int(1e8),
+    # "l1_coeff": 2,
     "beta1": 0.9,
     "beta2": 0.999,
     "dict_size": 2**16,  # some hidden dim?
     "seq_len": 512,
-    "enc_dtype": "fp32",  # probably use fp16
+    # "enc_dtype": "fp32",  # probably use fp16
     # "remove_rare_dir": False,
-    "model_name": "gpt2-small",  # not this
-    "site": "resid_post",
+    # "model_name": "gpt2-small",  # not this
+    # "site": "resid_post",
     # "layer": 0,
     "device": "cuda:0",  # maybee
     "model_batch_size": 8,
     "log_every": 100,
-    "save_every": 100000,
+    "save_every": 1000,
     "dec_init_norm": 0.005,
     "save_dir": "models/",
-    "save_version": 0
+    "save_version": 0,
+    # "wandb_project":
 }

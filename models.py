@@ -43,14 +43,14 @@ class CrossCoder(nn.Module):
 
         self.encoders = nn.ModuleList(
             [
-                nn.Linear(modelA.cfg.d_model, self.hidden_dim),
-                nn.Linear(modelB.cfg.d_model, self.hidden_dim),
+                nn.Linear(modelA.cfg.d_model, self.hidden_dim, dtype=torch.bfloat16),
+                nn.Linear(modelB.cfg.d_model, self.hidden_dim, dtype=torch.bfloat16),
             ]
         )
-        self.decoder = nn.ModuleList(
+        self.decoders = nn.ModuleList(
             [
-                nn.Linear(self.hidden_dim, modelA.cfg.d_model),
-                nn.Linear(self.hidden_dim, modelB.cfg.d_model),
+                nn.Linear(self.hidden_dim, modelA.cfg.d_model, dtype=torch.bfloat16),
+                nn.Linear(self.hidden_dim, modelB.cfg.d_model, dtype=torch.bfloat16),
             ]
         )
 
@@ -65,7 +65,7 @@ class CrossCoder(nn.Module):
         """
         # has two encoders, so m indicates which to use
 
-        raw_enc: torch.Tensor = self.encoder[m](x)  # pyright: ignore
+        raw_enc: torch.Tensor = self.encoders[m](x)  # pyright: ignore
         return self.topk_constraint(raw_enc)  # pyright: ignore
 
     def decode(self, x: torch.Tensor, m: int) -> torch.Tensor:
@@ -75,15 +75,16 @@ class CrossCoder(nn.Module):
 
         returns: decoded (reconstructed) residuals for model m
         """
-        return self.decoder[m](x)
+        return self.decoders[m](x)
 
     def topk_constraint(self, x: torch.Tensor) -> torch.Tensor:
         # DOES THIS WORK?
         # get topk
-        zeroed_idxs = torch.argmin(x, dim=-1)[:, : -self.topk]
-        x[zeroed_idxs] = 0
+        # zeroed_idxs = torch.argsort(x, dim=1)[:, : -self.topk]
+        # print(zeroed_idxs)
+        # x[zeroed_idxs] = 0
 
-        return x
+        return x.scatter(index=torch.argsort(x, dim=1)[:, : -self.topk], dim=1, value=0)
 
     def forward(self, x: torch.Tensor, encode_m: int, decode_m: int) -> torch.Tensor:
         """
@@ -94,9 +95,9 @@ class CrossCoder(nn.Module):
         returns: reconstructed residual of model `decode_m`
         """
 
-        encoded: torch.Tensor = self.encoder[encode_m](x)  # pyright: ignore
+        encoded: torch.Tensor = self.encoders[encode_m](x)  # pyright: ignore
         sparse_encoded = self.topk_constraint(encoded)  # pyright: ignore
-        decoded = self.decoder[decode_m](sparse_encoded)
+        decoded = self.decoders[decode_m](sparse_encoded)
 
         return decoded
 
@@ -201,10 +202,15 @@ class ResidualBuffer:
         self.dataloader_b_iter = iter(dataloader_b)
 
         self.buffer_size: int = cfg["batch_size"] * cfg["buffer_mult"]
-        self.buffer_batches: int = self.buffer_size // (cfg["seq_len"] - 1)
-        self.buffer_size: int = self.buffer_batches * (
-            cfg["seq_len"] - 1
+        self.buffer_batches: int = self.buffer_size // (
+            (cfg["seq_len"] - 1) * cfg["model_batch_size"]
+        )
+        self.buffer_size: int = (
+            self.buffer_batches * (cfg["seq_len"] - 1) * cfg["model_batch_size"]
         )  # clip to exact multiple of seq_len minus BOS
+
+        # print(cfg["batch_size"], cfg["buffer_mult"], cfg["seq_len"])
+        # print(self.buffer_size, self.buffer_batches)
 
         self.buffer_a = self.init_buffer(self.model_a)
         self.buffer_b = self.init_buffer(self.model_b)
@@ -238,8 +244,9 @@ class ResidualBuffer:
         )
         self.first_fill = False
 
-        for i in tqdm.trange(0, num_batches, self.cfg["model_batch_size"]):
-            
+        print(num_batches, self.buffer_batches, self.buffer_size)
+
+        for i in tqdm.trange(0, num_batches, desc="Filling buffer..."):
             batch_a = next(self.dataloader_a_iter)["input_ids"]
             batch_b = next(self.dataloader_b_iter)["input_ids"]
 
@@ -270,8 +277,11 @@ class ResidualBuffer:
             self.pointer += acts_a.shape[0]
 
         self.pointer = 0
-        self.buffer = self.buffer[
-            torch.randperm(self.buffer.shape[0]).to(self.cfg["device"])
+        self.buffer_a = self.buffer_a[
+            torch.randperm(self.buffer_a.shape[0]).to(self.cfg["device"])
+        ]
+        self.buffer_b = self.buffer_b[
+            torch.randperm(self.buffer_b.shape[0]).to(self.cfg["device"])
         ]
 
     def next(self) -> tuple[torch.Tensor, torch.Tensor]:

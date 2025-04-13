@@ -1,5 +1,6 @@
 from models import CrossCoder, ResidualBuffer
 from config import default_cfg
+from torch.nn.utils import clip_grad_norm_
 
 import torch
 import wandb
@@ -16,8 +17,10 @@ class CrossCoderTrainer:
         self.total_steps = self.cfg["num_tokens"] // self.cfg["batch_size"]
         self.step_counter = 0
 
-        self.crosscoder = CrossCoder(self.cfg, modelA, modelB)
-        self.buffer = ResidualBuffer(self.cfg, modelA, modelB, dataloader_a, dataloader_b)
+        self.crosscoder = CrossCoder(self.cfg, modelA, modelB).to(self.cfg["device"])
+        self.buffer = ResidualBuffer(
+            self.cfg, modelA, modelB, dataloader_a, dataloader_b
+        )
 
         self.optimizer = torch.optim.AdamW(
             self.crosscoder.parameters(),
@@ -30,7 +33,11 @@ class CrossCoderTrainer:
         )
 
         if use_wandb:
-            wandb.init(project="crosscoder", entity=WANDB_PROJECT, config=default_cfg)
+            wandb.init(
+                project="crosscoder",
+                entity="cs2222-crosscoders",
+                config=self.cfg,
+            )
 
     def lr_lambda(self, step):
         if step < 0.05 * self.total_steps:
@@ -44,7 +51,11 @@ class CrossCoderTrainer:
         acts_a, acts_b = self.buffer.next()
         losses = self.crosscoder.losses(acts_a, acts_b)
 
-        loss = torch.mean(torch.cat(losses, dim=0), dim=0)
+        loss = torch.mean(
+            torch.cat([loss.unsqueeze(0) for loss in losses], dim=0), dim=0
+        )
+
+        clip_grad_norm_(self.crosscoder.parameters(), max_norm=1.0)
 
         loss.backward()
         # TODO: do we need to do this "clip grad norm" shit
@@ -68,17 +79,17 @@ class CrossCoderTrainer:
         wandb.log(loss_dict, step=self.step_counter)
         print(loss_dict)
 
-    # def save(self):
-    #     self.crosscoder.save()
+    def save(self):
+        self.crosscoder.save()
 
     def train(self):
         self.step_counter = 0
         try:
-            for i in tqdm.trange(self.total_steps):
+            for i in tqdm.trange(self.total_steps, desc="Training..."):
                 loss_dict = self.step()
                 if i % self.cfg["log_every"] == 0:
                     self.log(loss_dict)
-                # if (i + 1) % self.cfg["save_every"] == 0:
-                #     self.save()
+                if (i + 1) % self.cfg["save_every"] == 0:
+                    self.save()
         finally:
             self.save()
