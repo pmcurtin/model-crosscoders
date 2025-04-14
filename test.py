@@ -29,16 +29,23 @@ def tokenize(examples, tokenizer):
     )
 
 
-dataset_a = pile.map(
-    lambda x: tokenize(x, tokenizer_a), batched=True, remove_columns=["text", "meta"]
+pile = (
+    pile.map(
+        lambda x: tokenize(x, tokenizer_a),
+        batched=True,
+        remove_columns=["meta", "attention_mask"],
+    )
+    .rename_column("input_ids", "input_ids_a")
+    .map(
+        lambda x: tokenize(x, tokenizer_b),
+        batched=True,
+        remove_columns=["text", "attention_mask"],
+    )
+    .rename_column("input_ids", "input_ids_b")
 )
 
-dataset_b = pile.map(
-    lambda x: tokenize(x, tokenizer_b), batched=True, remove_columns=["text", "meta"]
-)
-
-dl_a = DataLoader(dataset=dataset_a, batch_size=cfg["model_batch_size"])
-dl_b = DataLoader(dataset=dataset_b, batch_size=cfg["model_batch_size"])
+dl = DataLoader(dataset=pile, batch_size=cfg["model_batch_size"])
+# dl_b = DataLoader(dataset=dataset_b, batch_size=cfg["model_batch_size"])
 
 model_a = HookedTransformer.from_pretrained(model_a_str, tokenizer=tokenizer_a)
 for param in model_a.parameters():
@@ -47,5 +54,5 @@ model_b = HookedTransformer.from_pretrained(model_b_str, tokenizer=tokenizer_b)
 for param in model_b.parameters():
     param.requires_grad = False
 
-t = CrossCoderTrainer(model_a, model_b, dl_a, dl_b)
+t = CrossCoderTrainer(model_a, model_b, dl)
 t.train()

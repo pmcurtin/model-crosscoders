@@ -4,6 +4,7 @@ import argparse
 import torch
 from torch import nn
 import torch.nn.functional as F
+import json
 
 import einops
 
@@ -27,8 +28,6 @@ class CrossCoder(nn.Module):
         modelB: transformer_lens.HookedTransformer,
     ):
         super().__init__()
-        # modelA and modelB are imported because presumably we use them to get resid sizes
-
         # TODO: we don't need to be passing the entire models to a crosscoder
         # we just need the residual dimensions
 
@@ -36,27 +35,85 @@ class CrossCoder(nn.Module):
 
         self.save_dir = Path(self.cfg["save_dir"])
         self.save_version: int = self.cfg["save_version"]
+        self.version_save_dir = None
 
         self.hidden_dim = int(self.cfg["dict_size"])  # pyright: ignore
 
-        self.topk = 128  # idk
+        self.topk = self.cfg["topk"]  # idk
 
-        self.encoders = nn.ModuleList(
-            [
-                nn.Linear(modelA.cfg.d_model, self.hidden_dim, dtype=torch.bfloat16),
-                nn.Linear(modelB.cfg.d_model, self.hidden_dim, dtype=torch.bfloat16),
-            ]
+        self.encoder_a = nn.Parameter(
+            torch.empty(modelA.cfg.d_model, self.hidden_dim, dtype=torch.bfloat16)
         )
-        self.decoders = nn.ModuleList(
-            [
-                nn.Linear(self.hidden_dim, modelA.cfg.d_model, dtype=torch.bfloat16),
-                nn.Linear(self.hidden_dim, modelB.cfg.d_model, dtype=torch.bfloat16),
-            ]
+        self.encoder_b = nn.Parameter(
+            torch.empty(modelB.cfg.d_model, self.hidden_dim, dtype=torch.bfloat16)
+        )
+        self.decoder_a = nn.Parameter(
+            torch.nn.init.normal_(
+                torch.empty(self.hidden_dim, modelA.cfg.d_model, dtype=torch.bfloat16)
+            )
+        )
+        self.decoder_a.data = (
+            self.decoder_a.data
+            / self.decoder_a.data.norm(dim=-1, keepdim=True)
+            * self.cfg["dec_init_norm"]
+        )
+        self.encoder_a.data = einops.rearrange(
+            self.decoder_a.data.clone(),
+            "d_hidden d_model -> d_model d_hidden",
+        )
+        self.decoder_b = nn.Parameter(
+            torch.nn.init.normal_(
+                torch.empty(self.hidden_dim, modelB.cfg.d_model, dtype=torch.bfloat16)
+            )
+        )
+        self.decoder_b.data = (
+            self.decoder_b.data
+            / self.decoder_b.data.norm(dim=-1, keepdim=True)
+            * self.cfg["dec_init_norm"]
+        )
+        self.encoder_b.data = einops.rearrange(
+            self.decoder_b.data.clone(),
+            "d_hidden d_model -> d_model d_hidden",
         )
 
-        pass
+        self.b_encoder = nn.Parameter(
+            torch.zeros(self.hidden_dim, dtype=torch.bfloat16)
+        )
+        self.b_decoder_a = nn.Parameter(
+            torch.zeros(modelA.cfg.d_model, dtype=torch.bfloat16)
+        )
+        self.b_decoder_b = nn.Parameter(
+            torch.zeros(modelB.cfg.d_model, dtype=torch.bfloat16)
+        )
 
-    def encode(self, x: torch.Tensor, m: int) -> torch.Tensor:
+        # self.encoders = nn.ModuleList(
+        #     [
+        #         nn.Linear(modelA.cfg.d_model, self.hidden_dim, dtype=torch.bfloat16),
+        #         nn.Linear(modelB.cfg.d_model, self.hidden_dim, dtype=torch.bfloat16),
+        #     ]
+        # )
+        # self.decoders = nn.ModuleList(
+        #     [
+        #         nn.Linear(self.hidden_dim, modelA.cfg.d_model, dtype=torch.bfloat16),
+        #         nn.Linear(self.hidden_dim, modelB.cfg.d_model, dtype=torch.bfloat16),
+        #     ]
+        # )
+
+        self.act = F.relu
+
+    def normalize(
+        self, x: torch.Tensor, eps: float = 1e-5
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        mu = x.mean(dim=-1, keepdim=True)
+        x = x - mu
+        std = x.std(dim=-1, keepdim=True)
+        x = x / (std + eps)
+
+        return x, mu, std
+
+    def encode(
+        self, x: torch.Tensor, m: int
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         x: input residual
         m: which model (0, or 1) the residual's from
@@ -64,18 +121,25 @@ class CrossCoder(nn.Module):
         returns: encoded latents
         """
         # has two encoders, so m indicates which to use
+        x, mu, std = self.normalize(x)
+        raw_enc: torch.Tensor = (
+            x @ (self.encoder_a, self.encoder_b)[m]
+        ) + self.b_encoder  # self.encoders[m](x)  # pyright: ignore
+        return self.act(self.topk_constraint(raw_enc)), mu, std  # pyright: ignore
 
-        raw_enc: torch.Tensor = self.encoders[m](x)  # pyright: ignore
-        return self.topk_constraint(raw_enc)  # pyright: ignore
-
-    def decode(self, x: torch.Tensor, m: int) -> torch.Tensor:
+    def decode(
+        self, x: torch.Tensor, m: int, mu: torch.Tensor, std: torch.Tensor
+    ) -> torch.Tensor:
         """
         x: latents
         m: which model to decode to
 
         returns: decoded (reconstructed) residuals for model m
         """
-        return self.decoders[m](x)
+        return (
+            x @ (self.decoder_a, self.decoder_b)[m]
+            + (self.b_decoder_a, self.b_decoder_b)[m]
+        ) * std + mu
 
     def topk_constraint(self, x: torch.Tensor) -> torch.Tensor:
         # DOES THIS WORK?
@@ -84,7 +148,12 @@ class CrossCoder(nn.Module):
         # print(zeroed_idxs)
         # x[zeroed_idxs] = 0
 
-        return x.scatter(index=torch.argsort(x, dim=1)[:, : -self.topk], dim=1, value=0)
+        topk = torch.topk(x, k=self.topk, dim=-1)
+        result = torch.zeros_like(x)
+        result.scatter_(-1, topk.indices, topk.values)
+        return result
+
+        # return x.scatter(index=torch.argsort(x, dim=1)[:, : -self.topk], dim=1, value=0)
 
     def forward(self, x: torch.Tensor, encode_m: int, decode_m: int) -> torch.Tensor:
         """
@@ -95,9 +164,9 @@ class CrossCoder(nn.Module):
         returns: reconstructed residual of model `decode_m`
         """
 
-        encoded: torch.Tensor = self.encoders[encode_m](x)  # pyright: ignore
-        sparse_encoded = self.topk_constraint(encoded)  # pyright: ignore
-        decoded = self.decoders[decode_m](sparse_encoded)
+        latents, mu, std = self.encode(x, encode_m)  # pyright: ignore
+        # sparse_encoded = encoded)  # pyright: ignore
+        decoded = self.decode(latents, decode_m, mu, std)
 
         return decoded
 
@@ -140,14 +209,14 @@ class CrossCoder(nn.Module):
     def save(self):
         if self.version_save_dir is None:
             self.create_save_dir()
-        weight_path = self.save_dir / f"{self.save_version}.pt"
-        cfg_path = self.save_dir / f"{self.save_version}_cfg.json"
+        weight_path = self.version_save_dir / f"{self.save_version}.pt"
+        cfg_path = self.version_save_dir / f"{self.save_version}_cfg.json"
 
         torch.save(self.state_dict(), weight_path)
         with open(cfg_path, "w") as f:
             json.dump(cfg, f)
 
-        print(f"Saved as version {self.save_version} in {self.save_dir}")
+        print(f"Saved as version {self.save_version} in {self.version_save_dir}")
         self.save_version += 1
 
     @classmethod
@@ -187,8 +256,8 @@ class ResidualBuffer:
         cfg: dict,
         model_a: transformer_lens.HookedTransformer,
         model_b: transformer_lens.HookedTransformer,
-        dataloader_a: torch.utils.data.DataLoader,
-        dataloader_b: torch.utils.data.DataLoader,
+        dataloader: torch.utils.data.DataLoader,
+        # dataloader_b: torch.utils.data.DataLoader,
     ):
         """
         cfg: config file
@@ -198,8 +267,8 @@ class ResidualBuffer:
         self.cfg = cfg
         self.model_a = model_a
         self.model_b = model_b
-        self.dataloader_a_iter = iter(dataloader_a)
-        self.dataloader_b_iter = iter(dataloader_b)
+        self.dataloader_iter = iter(dataloader)
+        # self.dataloader_b_iter = iter(dataloader_b)
 
         self.buffer_size: int = cfg["batch_size"] * cfg["buffer_mult"]
         self.buffer_batches: int = self.buffer_size // (
@@ -244,26 +313,26 @@ class ResidualBuffer:
         )
         self.first_fill = False
 
-        print(num_batches, self.buffer_batches, self.buffer_size)
+        # print(num_batches, self.buffer_batches, self.buffer_size)
 
         for i in tqdm.trange(0, num_batches, desc="Filling buffer..."):
-            batch_a = next(self.dataloader_a_iter)["input_ids"]
-            batch_b = next(self.dataloader_b_iter)["input_ids"]
+            batch = next(self.dataloader_iter)  # ["input_ids"]
+            # batch_b = next(self.dataloader_b_iter)["input_ids"]
 
             _, cache = self.model_a.run_with_cache(
-                batch_a, names_filter=lambda x: x.endswith("resid_post")
+                batch["input_ids_a"], names_filter=lambda x: x.endswith("resid_post")
             )
             cache: transformer_lens.ActivationCache
 
-            LAYER = 4
-
+            # TODO: clean this up, we don't need all of the layers.
+            LAYER = 18
             acts_a = einops.rearrange(
                 cache.stack_activation("resid_post")[LAYER, :, 1:, :],
                 "batch seq_len d_model -> (batch seq_len) d_model",
             )
 
             _, cache = self.model_b.run_with_cache(
-                batch_b, names_filter=lambda x: x.endswith("resid_post")
+                batch["input_ids_b"], names_filter=lambda x: x.endswith("resid_post")
             )
             cache: transformer_lens.ActivationCache
 

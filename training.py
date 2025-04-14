@@ -12,15 +12,13 @@ import tqdm
 # some trainer class.
 # we should use weights & biases for experiment tracking
 class CrossCoderTrainer:
-    def __init__(self, modelA, modelB, dataloader_a, dataloader_b, use_wandb=True):
+    def __init__(self, modelA, modelB, dataloader, use_wandb=True):
         self.cfg = default_cfg  # populate this from args
         self.total_steps = self.cfg["num_tokens"] // self.cfg["batch_size"]
         self.step_counter = 0
 
         self.crosscoder = CrossCoder(self.cfg, modelA, modelB).to(self.cfg["device"])
-        self.buffer = ResidualBuffer(
-            self.cfg, modelA, modelB, dataloader_a, dataloader_b
-        )
+        self.buffer = ResidualBuffer(self.cfg, modelA, modelB, dataloader)
 
         self.optimizer = torch.optim.AdamW(
             self.crosscoder.parameters(),
@@ -28,9 +26,9 @@ class CrossCoderTrainer:
             betas=(self.cfg["beta1"], self.cfg["beta2"]),
         )
 
-        self.scheduler = torch.optim.lr_scheduler.LambdaLR(
-            self.optimizer, self.lr_lambda
-        )
+        # self.scheduler = torch.optim.lr_scheduler.LambdaLR(
+        #    self.optimizer, self.lr_lambda
+        # )
 
         if use_wandb:
             wandb.init(
@@ -55,12 +53,11 @@ class CrossCoderTrainer:
             torch.cat([loss.unsqueeze(0) for loss in losses], dim=0), dim=0
         )
 
-        clip_grad_norm_(self.crosscoder.parameters(), max_norm=1.0)
-
         loss.backward()
+        clip_grad_norm_(self.crosscoder.parameters(), max_norm=1.0)
         # TODO: do we need to do this "clip grad norm" shit
         self.optimizer.step()
-        self.scheduler.step()
+        # self.scheduler.step()
         self.optimizer.zero_grad()
 
         loss_dict = {
@@ -69,7 +66,7 @@ class CrossCoderTrainer:
             "ab_loss": losses[1].item(),
             "ba_loss": losses[2].item(),
             "bb_loss": losses[3].item(),
-            "lr": self.scheduler.get_last_lr()[0],
+            # "lr": self.scheduler.get_last_lr()[0],
         }
 
         self.step_counter += 1
@@ -84,10 +81,20 @@ class CrossCoderTrainer:
 
     def train(self):
         self.step_counter = 0
+        self.crosscoder.topk = self.cfg["dict_size"]
         try:
             for i in tqdm.trange(self.total_steps, desc="Training..."):
                 loss_dict = self.step()
+                self.crosscoder.topk = max(
+                    self.cfg["topk"],
+                    int(
+                        self.cfg["dict_size"]
+                        - i * (self.cfg["dict_size"] - self.cfg["topk"]) / 5e3
+                    ),
+                )
+                # print(self.crosscoder.topk)
                 if i % self.cfg["log_every"] == 0:
+                    loss_dict["k"] = self.crosscoder.topk
                     self.log(loss_dict)
                 if (i + 1) % self.cfg["save_every"] == 0:
                     self.save()

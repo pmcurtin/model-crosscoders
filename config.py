@@ -1,13 +1,14 @@
 default_cfg = {
     "seed": 51,
-    "batch_size": 2048,
-    "buffer_mult": 512,  # 512,
-    "lr": 2e-5,
+    "batch_size": 1024,
+    "buffer_mult": 1024,  # 512,
+    "lr": 5e-5,
     "num_tokens": int(1e8),
     # "l1_coeff": 2,
     "beta1": 0.9,
     "beta2": 0.999,
-    "dict_size": 2**16,  # some hidden dim?
+    "dict_size": 2**15,  # some hidden dim?
+    "topk": 64,
     "seq_len": 512,
     # "enc_dtype": "fp32",  # probably use fp16
     # "remove_rare_dir": False,
@@ -17,9 +18,9 @@ default_cfg = {
     "device": "cuda:0",  # maybee
     "model_batch_size": 8,
     "log_every": 100,
-    "save_every": 1000,
-    "dec_init_norm": 0.005,
-    "save_dir": "models/",
+    "save_every": 2000,
+    "dec_init_norm": 0.05,
+    "save_dir": "models/attempt_2/",
     "save_version": 0,
     # "wandb_project":
 }
