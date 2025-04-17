@@ -53,14 +53,14 @@ class CrossCoderTrainer:
             return self.cfg["l1_coeff"]
 
     def step(self):
-        acts_a, acts_b = self.buffer.next()
-        losses = self.crosscoder.losses(acts_a, acts_b)
+        acts_a, acts_b = self.buffer.next()  #
+        losses = self.crosscoder.losses(acts_a, acts_b)  #
 
         # l2 = torch.mean(
         #     torch.cat([loss.unsqueeze(0) for loss in losses[:4]], dim=0), dim=0
         # )
 
-        loss = losses[0] + self.get_l1_coeff() * losses[1]
+        loss = losses[0]  # + self.get_l1_coeff() * losses[1]
 
         loss.backward()
         clip_grad_norm_(self.crosscoder.parameters(), max_norm=1.0)

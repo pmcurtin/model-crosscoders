@@ -41,7 +41,7 @@ class CrossCoder(nn.Module):
 
         self.hidden_dim = int(self.cfg["dict_size"])  # pyright: ignore
 
-        # self.topk = self.cfg["topk"]  # idk
+        self.topk = self.cfg["topk"]  # idk
 
         self.encoder = nn.Parameter(
             torch.empty(
@@ -51,6 +51,10 @@ class CrossCoder(nn.Module):
             )
         )
 
+        self.encoder_bias = nn.Parameter(
+            torch.zeros(self.hidden_dim, dtype=torch.bfloat16)
+        )
+
         self.decoder = nn.Parameter(
             torch.nn.init.normal_(
                 torch.empty(
@@ -58,6 +62,13 @@ class CrossCoder(nn.Module):
                     modelA.cfg.d_model + modelB.cfg.d_model,
                     dtype=torch.bfloat16,
                 )
+            )
+        )
+
+        self.decoder_bias = nn.Parameter(
+            torch.zeros(
+                modelA.cfg.d_model + modelB.cfg.d_model,
+                dtype=torch.bfloat16,
             )
         )
 
@@ -156,7 +167,7 @@ class CrossCoder(nn.Module):
         returns: encoded latents
         """
 
-        return self.act(x @ self.encoder)
+        return self.act(self.topk_constraint(x @ self.encoder + self.encoder_bias))
 
         # has two encoders, so m indicates which to use
         x, mu, std = self.normalize(x)
@@ -178,7 +189,7 @@ class CrossCoder(nn.Module):
         returns: decoded (reconstructed) residuals for model m
         """
 
-        return x @ self.decoder
+        return x @ self.decoder + self.decoder_bias
 
         return (
             x @ (self.decoder_a, self.decoder_b)[m]

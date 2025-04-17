@@ -2,7 +2,7 @@ default_cfg = {
     "seed": 51,
     "batch_size": 2048,
     "buffer_mult": 512,  # 512,
-    "lr": 5e-5,
+    "lr": 1e-3,
     "num_tokens": int(1e8),
     "l1_coeff": 2,
     "beta1": 0.9,
@@ -18,9 +18,9 @@ default_cfg = {
     "device": "cuda:0",  # maybee
     "model_batch_size": 8,
     "log_every": 100,
-    "save_every": 2000,
+    "save_every": 5000,
     "dec_init_norm": 0.05,
-    "save_dir": "models/attempt_3/",
+    "save_dir": "models/some_model",
     "save_version": 0,
     # "wandb_project":
 }

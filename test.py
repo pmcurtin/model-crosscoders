@@ -47,10 +47,14 @@ pile = (
 dl = DataLoader(dataset=pile, batch_size=cfg["model_batch_size"])
 # dl_b = DataLoader(dataset=dataset_b, batch_size=cfg["model_batch_size"])
 
-model_a = HookedTransformer.from_pretrained(model_a_str, tokenizer=tokenizer_a)
+model_a = HookedTransformer.from_pretrained(
+    model_a_str, tokenizer=tokenizer_a, dtype="bfloat16"
+)
 for param in model_a.parameters():
     param.requires_grad = False
-model_b = HookedTransformer.from_pretrained(model_b_str, tokenizer=tokenizer_b)
+model_b = HookedTransformer.from_pretrained(
+    model_b_str, tokenizer=tokenizer_b, dtype="bfloat16"
+)
 for param in model_b.parameters():
     param.requires_grad = False
 
