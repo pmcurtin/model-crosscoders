@@ -342,6 +342,7 @@ class ResidualBuffer:
         model_a: transformer_lens.HookedTransformer,
         model_b: transformer_lens.HookedTransformer,
         dataloader: torch.utils.data.DataLoader,
+        use_qwen: bool,
         # dataloader_b: torch.utils.data.DataLoader,
     ):
         """
@@ -373,6 +374,10 @@ class ResidualBuffer:
         self.pointer = 0
 
         # normalization factor??
+        if use_qwen:
+            self.res_layers = (18, 18) # take from layer 18 for qwen
+        else:
+            self.res_layers = (11, 23) # take from layers (11, 23) for pythia; this is ~2/3 way through 160m and 410m respectively
 
         self.refresh()
 
@@ -402,16 +407,17 @@ class ResidualBuffer:
         for i in tqdm.trange(0, num_batches, desc="Filling buffer..."):
             batch = next(self.dataloader_iter)  # ["input_ids"]
             # batch_b = next(self.dataloader_b_iter)["input_ids"]
-            LAYER = 18
+            LAYER_A, LAYER_B = self.res_layers
+
             _, cache = self.model_a.run_with_cache(
                 batch["input_ids_a"],
                 names_filter=lambda x: x.endswith("resid_post"),
-                stop_at_layer=LAYER + 1,
+                stop_at_layer=LAYER_A + 1,
             )
             cache: transformer_lens.ActivationCache
 
             acts_a = einops.rearrange(
-                cache[get_act_name("resid_post", LAYER)][
+                cache[get_act_name("resid_post", LAYER_A)][
                     :, 1:
                 ],  # cache.stack_activation("resid_post")[LAYER, :, 1:, :],
                 "batch seq_len d_model -> (batch seq_len) d_model",
@@ -420,12 +426,12 @@ class ResidualBuffer:
             _, cache = self.model_b.run_with_cache(
                 batch["input_ids_b"],
                 names_filter=lambda x: x.endswith("resid_post"),
-                stop_at_layer=LAYER + 1,
+                stop_at_layer=LAYER_B + 1,
             )
             cache: transformer_lens.ActivationCache
 
             acts_b = einops.rearrange(
-                cache[get_act_name("resid_post", LAYER)][
+                cache[get_act_name("resid_post", LAYER_B)][
                     :, 1:
                 ],  # cache.stack_activation("resid_post")[LAYER, :, 1:, :],
                 "batch seq_len d_model -> (batch seq_len) d_model",
