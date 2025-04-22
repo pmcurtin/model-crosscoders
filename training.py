@@ -12,13 +12,13 @@ import tqdm
 # some trainer class.
 # we should use weights & biases for experiment tracking
 class CrossCoderTrainer:
-    def __init__(self, modelA, modelB, dataloader, use_wandb=True):
+    def __init__(self, modelA, modelB, dataloader, use_qwen=True, use_wandb=True):
         self.cfg = default_cfg  # populate this from args
         self.total_steps = self.cfg["num_tokens"] // self.cfg["batch_size"]
         self.step_counter = 0
 
         self.crosscoder = CrossCoder(self.cfg, modelA, modelB).to(self.cfg["device"])
-        self.buffer = ResidualBuffer(self.cfg, modelA, modelB, dataloader)
+        self.buffer = ResidualBuffer(self.cfg, modelA, modelB, dataloader, use_qwen)
 
         self.optimizer = torch.optim.AdamW(
             self.crosscoder.parameters(),

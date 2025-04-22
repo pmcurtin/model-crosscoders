@@ -16,6 +16,7 @@ default_cfg = {
     # "site": "resid_post",
     # "layer": 0,
     "device": "cuda:0",  # maybee
+    # "device": "cpu", # for the poor fish
     "model_batch_size": 8,
     "log_every": 100,
     "save_every": 5000,
