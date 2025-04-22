@@ -314,7 +314,8 @@ class CrossCoder(nn.Module):
     def load(
         cls,
         name,
-        model=None,
+        modelA,
+        modelB,
         path="",
     ):
         # If the files are not in the default save directory, you can specify a path
@@ -327,14 +328,7 @@ class CrossCoder(nn.Module):
         weight_path = save_dir / f"{str(name)}.pt"
 
         cfg = json.load(open(cfg_path, "r"))
-        # pprint.pprint(cfg)
-        if model is None:
-            model = (
-                HookedTransformer.from_pretrained(cfg["model_name"])
-                .to(DTYPES[cfg["enc_dtype"]])
-                .to(cfg["device"])
-            )
-        self = cls(cfg=cfg, model=model)
+        self = cls(cfg=cfg, modelA=modelA, modelB=modelB)
         self.load_state_dict(torch.load(weight_path))
         return self
 
