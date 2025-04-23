@@ -4,3 +4,5 @@ models/*
 delphi/*
 figures/*
 .DS_Store
+results/*
+statistics/*
