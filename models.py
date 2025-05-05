@@ -333,6 +333,228 @@ class CrossCoder(nn.Module):
         return self
 
 
+class BetterCrossCoder(nn.Module):
+    def __init__(
+        self,
+        cfg,
+        modelA: transformer_lens.HookedTransformer,
+        modelB: transformer_lens.HookedTransformer,
+    ):
+        super().__init__()
+        # TODO: we don't need to be passing the entire models to a crosscoder
+        # we just need the residual dimensions
+
+        self.cfg: dict[str, Any] = cfg  # config
+
+        self.save_dir = Path(self.cfg["save_dir"])
+        self.save_version: int = self.cfg["save_version"]
+        self.version_save_dir = None
+
+        self.hidden_dim = int(self.cfg["dict_size"])  # pyright: ignore
+
+        self.topk = self.cfg["topk"]  # idk
+
+        self.encoder_a = nn.Parameter(
+            torch.empty(
+                modelA.cfg.d_model,
+                self.hidden_dim,
+                dtype=torch.bfloat16,
+            )
+        )
+
+        self.encoder_a_bias = nn.Parameter(
+            torch.zeros(self.hidden_dim, dtype=torch.bfloat16)
+        )
+
+        self.decoder_a = nn.Parameter(
+            torch.nn.init.normal_(
+                torch.empty(
+                    self.hidden_dim,
+                    modelA.cfg.d_model,
+                    dtype=torch.bfloat16,
+                )
+            )
+        )
+
+        self.decoder_a_bias = nn.Parameter(
+            torch.zeros(
+                modelA.cfg.d_model,
+                dtype=torch.bfloat16,
+            )
+        )
+
+        self.decoder_a.data = (
+            self.decoder_a.data / self.decoder_a.data.norm(dim=-1, keepdim=True)
+        ) * self.cfg["dec_init_norm"]
+        self.encoder_a.data = einops.rearrange(
+            self.decoder_a.data.clone(),
+            "d_hidden d_model -> d_model d_hidden",
+        )
+
+        self.encoder_b = nn.Parameter(
+            torch.empty(
+                modelB.cfg.d_model,
+                self.hidden_dim,
+                dtype=torch.bfloat16,
+            )
+        )
+
+        self.encoder_b_bias = nn.Parameter(
+            torch.zeros(self.hidden_dim, dtype=torch.bfloat16)
+        )
+
+        self.decoder_b = nn.Parameter(
+            torch.nn.init.normal_(
+                torch.empty(
+                    self.hidden_dim,
+                    modelB.cfg.d_model,
+                    dtype=torch.bfloat16,
+                )
+            )
+        )
+
+        self.decoder_b_bias = nn.Parameter(
+            torch.zeros(
+                modelB.cfg.d_model,
+                dtype=torch.bfloat16,
+            )
+        )
+
+        self.decoder_b.data = (
+            self.decoder_b.data / self.decoder_b.data.norm(dim=-1, keepdim=True)
+        ) * self.cfg["dec_init_norm"]
+        self.encoder_b.data = einops.rearrange(
+            self.decoder_b.data.clone(),
+            "d_hidden d_model -> d_model d_hidden",
+        )
+
+        self.act = F.relu
+
+    def encode(self, x: torch.Tensor, in_model: int) -> torch.Tensor:
+        """
+        x: input residual
+        m: which model (0, or 1) the residual's from
+
+        returns: encoded latents
+        """
+
+        if in_model == 0:
+            x = self.topk_constraint(x @ self.encoder_a + self.encoder_a_bias)
+        else:
+            x = self.topk_constraint(x @ self.encoder_b + self.encoder_b_bias)
+
+        return x
+
+    def decode(self, x: torch.Tensor, out_model: int) -> torch.Tensor:
+        """
+        x: latents
+        m: which model to decode to
+
+        returns: decoded (reconstructed) residuals for model m
+        """
+
+        if out_model == 0:
+            x = x @ self.decoder_a + self.decoder_a_bias
+        else:
+            x = x @ self.decoder_b + self.decoder_b_bias
+
+        return x
+
+    def topk_constraint(self, x: torch.Tensor) -> torch.Tensor:
+        topk = torch.topk(x, k=self.topk, dim=-1)
+        result = torch.zeros_like(x)
+        result.scatter_(-1, topk.indices, topk.values)
+        return result
+
+    def forward(self, x: torch.Tensor, in_model: int, out_model: int) -> torch.Tensor:
+        """
+        x: input residual
+        encode_m: which model encoder to use
+        decode_m: which model decoder to use
+
+        returns: reconstructed residual of model `decode_m`
+        """
+
+        return self.decode(self.encode(x, in_model), out_model)
+
+    def losses(self, x_a: torch.Tensor, x_b: torch.Tensor):
+        """
+        x_a: residuals from model a
+        x_b: residuals from model b
+
+        returns: mse losses of all four training objectives
+        """
+
+        recons = torch.stack(
+            [
+                self.forward(x_a, 0, 0),
+                self.forward(x_a, 0, 1),
+                self.forward(x_b, 1, 0),
+                self.forward(x_b, 1, 1),
+            ],
+            dim=0,
+        )
+
+        targets = torch.stack([x_a, x_b, x_a, x_b], dim=0)
+
+        l2 = torch.sum(torch.square(targets - recons), dim=-1).mean(dim=-1)
+
+        aa, ab, ba, bb = l2
+
+        l2 = l2.mean()
+
+        return (l2, aa, ab, ba, bb)
+
+    # folling functions straight from neel
+    def create_save_dir(self):
+        version_list = [
+            int(file.name.split("_")[1])
+            for file in list(self.save_dir.iterdir())
+            if "version" in str(file)
+        ]
+        if len(version_list):
+            version = 1 + max(version_list)
+        else:
+            version = 0
+        self.version_save_dir = self.save_dir / f"version_{version}"
+        self.version_save_dir.mkdir(parents=True)
+
+    def save(self):
+        if self.version_save_dir is None:
+            self.create_save_dir()
+        weight_path = self.version_save_dir / f"{self.save_version}.pt"
+        cfg_path = self.version_save_dir / f"{self.save_version}_cfg.json"
+
+        torch.save(self.state_dict(), weight_path)
+        with open(cfg_path, "w") as f:
+            json.dump(cfg, f)
+
+        print(f"Saved as version {self.save_version} in {self.version_save_dir}")
+        self.save_version += 1
+
+    @classmethod
+    def load(
+        cls,
+        name,
+        modelA,
+        modelB,
+        path="",
+    ):
+        # If the files are not in the default save directory, you can specify a path
+        # It's assumed that weights are [name].pt and cfg is [name]_cfg.json
+        if path == "":
+            save_dir = self.save_dir
+        else:
+            save_dir = Path(path)
+        cfg_path = save_dir / f"{str(name)}_cfg.json"
+        weight_path = save_dir / f"{str(name)}.pt"
+
+        cfg = json.load(open(cfg_path, "r"))
+        self = cls(cfg=cfg, modelA=modelA, modelB=modelB)
+        self.load_state_dict(torch.load(weight_path))
+        return self
+
+
 # I like Neel Nanda's buffer method for generating residuals on-the-fly
 # read his impl first. Ours will be simpler probably
 class ResidualBuffer:
@@ -375,9 +597,12 @@ class ResidualBuffer:
 
         # normalization factor??
         if use_qwen:
-            self.res_layers = (18, 18) # take from layer 18 for qwen
+            self.res_layers = (18, 18)  # take from layer 18 for qwen
         else:
-            self.res_layers = (11, 23) # take from layers (11, 23) for pythia; this is ~2/3 way through 160m and 410m respectively
+            self.res_layers = (
+                11,
+                23,
+            )  # take from layers (11, 23) for pythia; this is ~2/3 way through 160m and 410m respectively
 
         self.refresh()
 

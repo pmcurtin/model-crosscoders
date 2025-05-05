@@ -1,4 +1,4 @@
-from models import CrossCoder, ResidualBuffer
+from models import CrossCoder, BetterCrossCoder, ResidualBuffer
 from config import default_cfg
 from torch.nn.utils import clip_grad_norm_
 
@@ -12,12 +12,27 @@ import tqdm
 # some trainer class.
 # we should use weights & biases for experiment tracking
 class CrossCoderTrainer:
-    def __init__(self, modelA, modelB, dataloader, use_qwen=True, use_wandb=True):
+    def __init__(
+        self,
+        modelA,
+        modelB,
+        dataloader,
+        use_qwen=True,
+        use_wandb=True,
+        use_better=False,
+    ):
         self.cfg = default_cfg  # populate this from args
         self.total_steps = self.cfg["num_tokens"] // self.cfg["batch_size"]
         self.step_counter = 0
-
-        self.crosscoder = CrossCoder(self.cfg, modelA, modelB).to(self.cfg["device"])
+        self.better = use_better
+        if use_better:
+            self.crosscoder = BetterCrossCoder(self.cfg, modelA, modelB).to(
+                self.cfg["device"]
+            )
+        else:
+            self.crosscoder = CrossCoder(self.cfg, modelA, modelB).to(
+                self.cfg["device"]
+            )
         self.buffer = ResidualBuffer(self.cfg, modelA, modelB, dataloader, use_qwen)
 
         self.optimizer = torch.optim.AdamW(
@@ -53,14 +68,10 @@ class CrossCoderTrainer:
             return self.cfg["l1_coeff"]
 
     def step(self):
-        acts_a, acts_b = self.buffer.next()  #
-        losses = self.crosscoder.losses(acts_a, acts_b)  #
+        acts_a, acts_b = self.buffer.next()
+        losses = self.crosscoder.losses(acts_a, acts_b)
 
-        # l2 = torch.mean(
-        #     torch.cat([loss.unsqueeze(0) for loss in losses[:4]], dim=0), dim=0
-        # )
-
-        loss = losses[0]  # + self.get_l1_coeff() * losses[1]
+        loss = losses[0]
 
         loss.backward()
         clip_grad_norm_(self.crosscoder.parameters(), max_norm=1.0)
@@ -71,16 +82,19 @@ class CrossCoderTrainer:
 
         loss_dict = {
             "loss": loss.item(),
-            # "aa_loss": losses[0].item(),
-            # "ab_loss": losses[1].item(),
-            # "ba_loss": losses[2].item(),
-            # "bb_loss": losses[3].item(),
             "l2": losses[0].item(),
-            "l1": losses[1].item(),
-            "l0": losses[2].item(),
-            "l1_coef": self.get_l1_coeff(),
             "lr": self.scheduler.get_last_lr()[0],
         }
+
+        if self.better:
+            loss_dict.update(
+                {
+                    "aa": losses[1].item(),
+                    "ab": losses[2].item(),
+                    "ba": losses[3].item(),
+                    "bb": losses[4].item(),
+                }
+            )
 
         self.step_counter += 1
         return loss_dict
@@ -98,16 +112,7 @@ class CrossCoderTrainer:
         try:
             for i in tqdm.trange(self.total_steps, desc="Training..."):
                 loss_dict = self.step()
-                # self.crosscoder.topk = max(
-                #     self.cfg["topk"],
-                #     int(
-                #         self.cfg["dict_size"]
-                #         - i * (self.cfg["dict_size"] - self.cfg["topk"]) / 5e3
-                #     ),
-                # )
-                # print(self.crosscoder.topk)
                 if i % self.cfg["log_every"] == 0:
-                    # loss_dict["k"] = self.crosscoder.topk
                     self.log(loss_dict)
                 if (i + 1) % self.cfg["save_every"] == 0:
                     self.save()

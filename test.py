@@ -58,5 +58,5 @@ model_b = HookedTransformer.from_pretrained(
 for param in model_b.parameters():
     param.requires_grad = False
 
-t = CrossCoderTrainer(model_a, model_b, dl, use_wandb=True)
+t = CrossCoderTrainer(model_a, model_b, dl, use_wandb=True, use_better=True)
 t.train()
