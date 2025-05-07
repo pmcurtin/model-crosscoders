@@ -1,8 +1,8 @@
-wandb/*
-__pycache__/*
-models/*
-delphi/*
-figures/*
+wandb/
+__pycache__/
+models/
+delphi/
 .DS_Store
-results/*
-statistics/*
+interp/results/
+interp/statistics/
+datasets/
