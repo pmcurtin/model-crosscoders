@@ -702,14 +702,253 @@ class ResidualBuffer:
         return activations_a * self.scaling_a, activations_b * self.scaling_b
 
 
-class ModelWithEncoder(nn.Module):
-    # I think delphi needs a model that takes in text and spits out
-    # SAE features. This can be that model
 
-    def __init__(self, model, encoder, layer):
-        pass
+class SAE(nn.Module):
+    def __init__(
+        self,
+        cfg: dict[str, Any],
+        model: transformer_lens.HookedTransformer
+    ):
+        super().__init__()
+        self.cfg: dict[str, Any] = cfg
+        self.save_dir = Path(self.cfg["save_dir"])
+        self.save_version: int = self.cfg["save_version"]
+        self.version_save_dir = None
+        self.hidden_dim = int(self.cfg["dict_size"])
+        self.topk = self.cfg["topk"]
 
-    def forward(self, x):
-        # first run model on x
-        # then run encoder on residual
-        pass
+        self.encoder = nn.Parameter(
+            torch.empty(
+                model.cfg.d_model,
+                self.hidden_dim,
+                dtype=torch.bfloat16,
+            )
+        )
+        self.encoder_bias = nn.Parameter(
+            torch.zeros(self.hidden_dim, dtype=torch.bfloat16)
+        )
+
+        self.decoder = nn.Parameter(
+            torch.nn.init.normal_(
+                torch.empty(
+                    self.hidden_dim,
+                    model.cfg.d_model,
+                    dtype=torch.bfloat16,
+                )
+            )
+        )
+        self.decoder_bias = nn.Parameter(
+            torch.zeros(
+                model.cfg.d_model,
+                dtype=torch.bfloat16,
+            )
+        )
+
+        self.decoder.data = (
+            self.decoder.data / self.decoder.data.norm(dim=-1, keepdim=True)
+        ) * self.cfg["dec_init_norm"]
+        self.encoder.data = einops.rearrange(
+            self.decoder.data.clone(),
+            "d_hidden d_model -> d_model d_hidden",
+        )
+        self.act = F.relu
+
+    def normalize(
+        self, x: torch.Tensor, eps: float = 1e-5
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        mu = x.mean(dim=-1, keepdim=True)
+        x = x - mu
+        std = x.std(dim=-1, keepdim=True)
+        x = x / (std + eps)
+
+        return x, mu, std
+
+    def encode(
+        self,
+        x: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+
+        return self.act(self.topk_constraint(x @ self.encoder + self.encoder_bias))
+
+    def decode(
+        self,
+        x: torch.Tensor,
+    ) -> torch.Tensor:
+
+        return x @ self.decoder + self.decoder_bias
+
+    def topk_constraint(self, x: torch.Tensor) -> torch.Tensor:
+        topk = torch.topk(x, k=self.topk, dim=-1)
+        result = torch.zeros_like(x)
+        result.scatter_(-1, topk.indices, topk.values)
+        return result
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.decode(self.encode(x))
+
+    def losses(self, x: torch.Tensor):
+        acts = self.encode(x)
+        recon = self.decode(acts)
+
+        l2 = torch.sum(
+            torch.square(x - recon), dim=-1
+        ).mean()
+
+        dec_norm = self.decoder.norm(dim=-1)
+        l1 = (acts @ dec_norm).mean()
+        l0 = (acts > 0).float().sum(-1).mean()
+
+        return (
+            l2,
+            l1,
+            l0,
+        )
+
+    # folling functions straight from neel
+    def create_save_dir(self):
+        version_list = [
+            int(file.name.split("_")[1])
+            for file in list(self.save_dir.iterdir())
+            if "version" in str(file)
+        ]
+        if len(version_list):
+            version = 1 + max(version_list)
+        else:
+            version = 0
+        self.version_save_dir = self.save_dir / f"version_{version}"
+        self.version_save_dir.mkdir(parents=True)
+
+    def save(self):
+        if self.version_save_dir is None:
+            self.create_save_dir()
+        weight_path = self.version_save_dir / f"{self.save_version}.pt"
+        cfg_path = self.version_save_dir / f"{self.save_version}_cfg.json"
+
+        torch.save(self.state_dict(), weight_path)
+        with open(cfg_path, "w") as f:
+            json.dump(cfg, f)
+
+        print(f"Saved as version {self.save_version} in {self.version_save_dir}")
+        self.save_version += 1
+
+    @classmethod
+    def load(
+        cls,
+        name,
+        model,
+        path="",
+    ):
+        # if the files are not in the default save directory, you can specify a path
+        if path == "":
+            save_dir = self.save_dir
+        else:
+            save_dir = Path(path)
+        # assumed that weights are [name].pt and cfg is [name]_cfg.json
+        cfg_path = save_dir / f"{str(name)}_cfg.json"
+        weight_path = save_dir / f"{str(name)}.pt"
+
+        cfg = json.load(open(cfg_path, "r"))
+        self = cls(cfg=cfg, model=model)
+        self.load_state_dict(torch.load(weight_path))
+        return self
+
+
+class SAEBuffer(nn.Module):
+    def __init__(
+        self,
+        cfg: dict,
+        model: transformer_lens.HookedTransformer,
+        dataloader: torch.utils.data.DataLoader,
+        use_qwen: bool,
+    ):
+        self.cfg = cfg
+        self.model = model
+        self.dataloader_iter = iter(dataloader)
+
+        self.buffer_size: int = cfg["batch_size"] * cfg["buffer_mult"]
+        self.buffer_batches: int = self.buffer_size // (
+            (cfg["seq_len"] - 1) * cfg["model_batch_size"]
+        )
+        self.buffer_size: int = (
+            self.buffer_batches * (cfg["seq_len"] - 1) * cfg["model_batch_size"]
+        )  # clip to exact multiple of seq_len minus BOS
+
+        # print(cfg["batch_size"], cfg["buffer_mult"], cfg["seq_len"])
+        # print(self.buffer_size, self.buffer_batches)
+
+        self.buffer = self.init_buffer(self.model)
+
+        self.first_fill = True  # whether first call to refresh has occurred
+        self.pointer = 0
+
+        # LOOK AT THIS...
+        if use_qwen:
+            self.res_layers = 18
+        else:
+            self.res_layers = 11 # 23?
+
+        self.refresh()
+
+    @torch.no_grad()
+    def init_buffer(self, model: transformer_lens.HookedTransformer) -> torch.Tensor:
+        return torch.zeros(
+            (self.buffer_size, model.cfg.d_model),
+            dtype=torch.bfloat16,
+            requires_grad=False,
+            device=cfg["device"],
+        )
+
+    @torch.no_grad()
+    def refresh(self):
+        # initally fill the buffer (first call)
+        # then just discard old examples and top it up on subsequent calls
+        # we can use transformerlens here (easy, use activation cache), or some fancier way of getting
+        # the residuals that we want (for example, no need to execute transformer past
+        # layer of interest)
+        self.pointer = 0
+        num_batches = (
+            self.buffer_batches // 2 if not self.first_fill else self.buffer_batches
+        )
+
+        for _ in tqdm.trange(0, num_batches, desc="Filling buffer..."):
+            batch = next(self.dataloader_iter)
+
+            _, cache = self.model.run_with_cache(
+                batch["input_ids_a"], # look at this?
+                names_filter=lambda x: x.endswith("resid_post"),
+                stop_at_layer=self.res_layer + 1,
+            )
+            cache: transformer_lens.ActivationCache
+
+            acts = einops.rearrange(
+                cache[get_act_name("resid_post", self.res_layer)][
+                    :, 1:
+                ],
+                "batch seq_len d_model -> (batch seq_len) d_model",
+            )
+
+            self.buffer[self.pointer : self.pointer + acts.shape[0]] = acts
+            self.pointer += acts.shape[0]
+
+        self.pointer = 0
+        self.buffer = self.buffer[
+            torch.randperm(self.buffer.shape[0]).to(self.cfg["device"])
+        ]
+
+        if self.first_fill:
+            self.scaling = (
+                np.sqrt(self.model.cfg.d_model)
+                / (self.buffer.norm(dim=-1).mean() + 1e-5).item()
+            )
+
+        self.first_fill = False
+
+    def next(self) -> torch.Tensor:
+        end: int = self.pointer + self.cfg["batch_size"]
+        activations = self.buffer[self.pointer : end]
+        self.pointer = end
+
+        if self.pointer > self.buffer_size // 2:
+            self.refresh()
+
+        return activations * self.scaling
