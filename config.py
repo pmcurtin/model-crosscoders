@@ -7,7 +7,7 @@ default_cfg = {
     "l1_coeff": 2,
     "beta1": 0.9,
     "beta2": 0.999,
-    "dict_size": 2**17,  # some hidden dim?
+    "dict_size": 2**15,  # some hidden dim?
     "topk": 64,
     "seq_len": 512,
     # "enc_dtype": "fp32",  # probably use fp16
@@ -21,7 +21,7 @@ default_cfg = {
     "log_every": 100,
     "save_every": 5000,
     "dec_init_norm": 0.05,
-    "save_dir": "models/large_crosscoder",
+    "save_dir": "models/gpt2_crosscoder",
     "save_version": 0,
     # "wandb_project":
 }
