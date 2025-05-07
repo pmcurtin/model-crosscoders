@@ -6,14 +6,33 @@ from training import CrossCoderTrainer
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from transformer_lens import HookedTransformer
 
-cfg = default_cfg
+cfg = {
+    "seed": 51,
+    "batch_size": 2048,
+    "buffer_mult": 512,
+    "lr": 1e-3,
+    "num_tokens": int(1e8),
+    "l1_coeff": 2,
+    "beta1": 0.9,
+    "beta2": 0.999,
+    "dict_size": 2**15,
+    "topk": 64,
+    "seq_len": 512,
+    "device": "cuda:0",
+    "model_batch_size": 8,
+    "log_every": 100,
+    "save_every": 5000,
+    "dec_init_norm": 0.05,
+    "save_dir": "models/gpt2_crosscoder",
+    "save_version": 0,
+}
+
+model_a_str = "gpt2-medium"
+model_b_str = "microsoft/DialoGPT-medium"
+
+########
 
 pile = load_dataset("monology/pile-uncopyrighted", streaming=True, split="train")
-
-# dl = DataLoader(dataset=pile, batch_size=cfg["model_batch_size"])
-
-model_a_str = "gpt2-medium"  # "Qwen/Qwen2.5-0.5B"
-model_b_str = "microsoft/DialoGPT-medium"  # "Qwen/Qwen2.5-0.5B-Instruct"
 
 tokenizer_a = AutoTokenizer.from_pretrained(model_a_str)
 tokenizer_b = AutoTokenizer.from_pretrained(model_b_str)
@@ -48,13 +67,16 @@ pile = (
 )
 
 dl = DataLoader(dataset=pile, batch_size=cfg["model_batch_size"])
-# dl_b = DataLoader(dataset=dataset_b, batch_size=cfg["model_batch_size"])
 
 model_a = HookedTransformer.from_pretrained(
     model_a_str, tokenizer=tokenizer_a, dtype="bfloat16"
 )
 for param in model_a.parameters():
     param.requires_grad = False
+
+
+# HookedTransformer doesn't natively support DialoGPT
+# but the architecture is identical to gpt2, so do this
 model_b = HookedTransformer.from_pretrained(
     model_a_str,
     tokenizer=tokenizer_b,

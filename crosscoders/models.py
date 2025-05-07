@@ -16,9 +16,8 @@ import transformer_lens
 from transformer_lens.utils import get_act_name
 import tqdm
 
-from config import default_cfg
+from .config import default_cfg
 
-# cfg = arg_parse_update_cfg(default_cfg)
 cfg = default_cfg  # placeholder for now since we're lazy
 
 
@@ -702,13 +701,8 @@ class ResidualBuffer:
         return activations_a * self.scaling_a, activations_b * self.scaling_b
 
 
-
 class SAE(nn.Module):
-    def __init__(
-        self,
-        cfg: dict[str, Any],
-        model: transformer_lens.HookedTransformer
-    ):
+    def __init__(self, cfg: dict[str, Any], model: transformer_lens.HookedTransformer):
         super().__init__()
         self.cfg: dict[str, Any] = cfg
         self.save_dir = Path(self.cfg["save_dir"])
@@ -753,28 +747,16 @@ class SAE(nn.Module):
         )
         self.act = F.relu
 
-    def normalize(
-        self, x: torch.Tensor, eps: float = 1e-5
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        mu = x.mean(dim=-1, keepdim=True)
-        x = x - mu
-        std = x.std(dim=-1, keepdim=True)
-        x = x / (std + eps)
-
-        return x, mu, std
-
     def encode(
         self,
         x: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-
         return self.act(self.topk_constraint(x @ self.encoder + self.encoder_bias))
 
     def decode(
         self,
         x: torch.Tensor,
     ) -> torch.Tensor:
-
         return x @ self.decoder + self.decoder_bias
 
     def topk_constraint(self, x: torch.Tensor) -> torch.Tensor:
@@ -790,19 +772,9 @@ class SAE(nn.Module):
         acts = self.encode(x)
         recon = self.decode(acts)
 
-        l2 = torch.sum(
-            torch.square(x - recon), dim=-1
-        ).mean()
+        l2 = torch.sum(torch.square(x - recon), dim=-1).mean()
 
-        dec_norm = self.decoder.norm(dim=-1)
-        l1 = (acts @ dec_norm).mean()
-        l0 = (acts > 0).float().sum(-1).mean()
-
-        return (
-            l2,
-            l1,
-            l0,
-        )
+        return (l2,)
 
     # folling functions straight from neel
     def create_save_dir(self):
@@ -853,13 +825,12 @@ class SAE(nn.Module):
         return self
 
 
-class SAEBuffer(nn.Module):
+class SAEBuffer:
     def __init__(
         self,
         cfg: dict,
         model: transformer_lens.HookedTransformer,
         dataloader: torch.utils.data.DataLoader,
-        use_qwen: bool,
     ):
         self.cfg = cfg
         self.model = model
@@ -869,23 +840,17 @@ class SAEBuffer(nn.Module):
         self.buffer_batches: int = self.buffer_size // (
             (cfg["seq_len"] - 1) * cfg["model_batch_size"]
         )
+
         self.buffer_size: int = (
             self.buffer_batches * (cfg["seq_len"] - 1) * cfg["model_batch_size"]
         )  # clip to exact multiple of seq_len minus BOS
-
-        # print(cfg["batch_size"], cfg["buffer_mult"], cfg["seq_len"])
-        # print(self.buffer_size, self.buffer_batches)
 
         self.buffer = self.init_buffer(self.model)
 
         self.first_fill = True  # whether first call to refresh has occurred
         self.pointer = 0
 
-        # LOOK AT THIS...
-        if use_qwen:
-            self.res_layers = 18
-        else:
-            self.res_layers = 11 # 23?
+        self.res_layer = cfg["resid_layer"]
 
         self.refresh()
 
@@ -914,16 +879,14 @@ class SAEBuffer(nn.Module):
             batch = next(self.dataloader_iter)
 
             _, cache = self.model.run_with_cache(
-                batch["input_ids_a"], # look at this?
+                batch["input_ids"],  # look at this?
                 names_filter=lambda x: x.endswith("resid_post"),
                 stop_at_layer=self.res_layer + 1,
             )
             cache: transformer_lens.ActivationCache
 
             acts = einops.rearrange(
-                cache[get_act_name("resid_post", self.res_layer)][
-                    :, 1:
-                ],
+                cache[get_act_name("resid_post", self.res_layer)][:, 1:],
                 "batch seq_len d_model -> (batch seq_len) d_model",
             )
 

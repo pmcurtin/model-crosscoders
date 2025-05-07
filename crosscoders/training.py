@@ -1,5 +1,5 @@
-from models import CrossCoder, BetterCrossCoder, ResidualBuffer, SAE, SAEBuffer
-from config import default_cfg
+from .models import CrossCoder, BetterCrossCoder, ResidualBuffer, SAE, SAEBuffer
+from .config import default_cfg
 from torch.nn.utils import clip_grad_norm_
 
 import torch
@@ -20,8 +20,9 @@ class CrossCoderTrainer:
         use_qwen=True,
         use_wandb=True,
         use_better=False,
+        cfg=default_cfg,
     ):
-        self.cfg = default_cfg  # populate this from args
+        self.cfg = cfg
         self.total_steps = self.cfg["num_tokens"] // self.cfg["batch_size"]
         self.step_counter = 0
         self.better = use_better
@@ -121,18 +122,12 @@ class CrossCoderTrainer:
 
 
 class SAETrainer:
-    def __init__(
-        self,
-        model,
-        dataloader,
-        use_qwen=True,
-        use_wandb=True,
-    ):
-        self.cfg = default_cfg 
+    def __init__(self, model, dataloader, use_wandb=True, cfg=default_cfg):
+        self.cfg = cfg
         self.total_steps = self.cfg["num_tokens"] // self.cfg["batch_size"]
         self.step_counter = 0
         self.SAE = SAE(self.cfg, model).to(self.cfg["device"])
-        self.buffer = SAEBuffer(self.cfg, model, dataloader, use_qwen)
+        self.buffer = SAEBuffer(self.cfg, model, dataloader)
 
         self.optimizer = torch.optim.AdamW(
             self.SAE.parameters(),
@@ -173,7 +168,9 @@ class SAETrainer:
         loss = losses[0]
 
         loss.backward()
-        clip_grad_norm_(self.SAE.parameters(), max_norm=1.0) # TODO: do we need to do this "clip grad norm" shit
+        clip_grad_norm_(
+            self.SAE.parameters(), max_norm=1.0
+        )  # TODO: do we need to do this "clip grad norm" shit
         self.optimizer.step()
         self.scheduler.step()
         self.optimizer.zero_grad()
@@ -183,16 +180,6 @@ class SAETrainer:
             "l2": losses[0].item(),
             "lr": self.scheduler.get_last_lr()[0],
         }
-
-        # if self.better:
-        #     loss_dict.update(
-        #         {
-        #             "aa": losses[1].item(),
-        #             "ab": losses[2].item(),
-        #             "ba": losses[3].item(),
-        #             "bb": losses[4].item(),
-        #         }
-        #     )
 
         self.step_counter += 1
         return loss_dict
