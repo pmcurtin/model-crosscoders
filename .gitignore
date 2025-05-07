@@ -5,4 +5,5 @@ delphi/
 .DS_Store
 interp/results/
 interp/statistics/
+interp/delphi.log
 datasets/
