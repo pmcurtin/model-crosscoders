@@ -1,6 +1,4 @@
 import torch
-from torch.utils.data import DataLoader
-import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import os
@@ -58,6 +56,6 @@ plt.ylabel("Number of Features")
 plt.xlim((0, 1))
 
 # Save the plot
-if not os.path.exists("./figures"):
-    os.makedirs("./figures")
-plt.savefig(f"./figures/{CROSSCODER_RUN_NAME} Relative L2 Norm Graph.png")
+if not os.path.exists("../figures"):
+    os.makedirs("../figures")
+plt.savefig(f"../figures/{CROSSCODER_RUN_NAME} Relative L2 Norm Graph.png")
