@@ -25,8 +25,8 @@ class CrossCoder(nn.Module):
     def __init__(
         self,
         cfg,
-        modelA: transformer_lens.HookedTransformer,
-        modelB: transformer_lens.HookedTransformer,
+        model_dim_a: int,
+        model_dim_b: int,
     ):
         super().__init__()
         # TODO: we don't need to be passing the entire models to a crosscoder
@@ -44,7 +44,7 @@ class CrossCoder(nn.Module):
 
         self.encoder = nn.Parameter(
             torch.empty(
-                modelA.cfg.d_model + modelB.cfg.d_model,
+                model_dim_a + model_dim_b,
                 self.hidden_dim,
                 dtype=torch.bfloat16,
             )
@@ -58,7 +58,7 @@ class CrossCoder(nn.Module):
             torch.nn.init.normal_(
                 torch.empty(
                     self.hidden_dim,
-                    modelA.cfg.d_model + modelB.cfg.d_model,
+                    model_dim_a + model_dim_b,
                     dtype=torch.bfloat16,
                 )
             )
@@ -66,7 +66,7 @@ class CrossCoder(nn.Module):
 
         self.decoder_bias = nn.Parameter(
             torch.zeros(
-                modelA.cfg.d_model + modelB.cfg.d_model,
+                model_dim_a + model_dim_b,
                 dtype=torch.bfloat16,
             )
         )
@@ -313,8 +313,8 @@ class CrossCoder(nn.Module):
     def load(
         cls,
         name,
-        modelA,
-        modelB,
+        model_dim_a,
+        model_dim_b,
         path="",
     ):
         # If the files are not in the default save directory, you can specify a path
@@ -327,18 +327,13 @@ class CrossCoder(nn.Module):
         weight_path = save_dir / f"{str(name)}.pt"
 
         cfg = json.load(open(cfg_path, "r"))
-        self = cls(cfg=cfg, modelA=modelA, modelB=modelB)
+        self = cls(cfg=cfg, model_dim_a=model_dim_a, model_dim_b=model_dim_b)
         self.load_state_dict(torch.load(weight_path))
         return self
 
 
 class BetterCrossCoder(nn.Module):
-    def __init__(
-        self,
-        cfg,
-        modelA: transformer_lens.HookedTransformer,
-        modelB: transformer_lens.HookedTransformer,
-    ):
+    def __init__(self, cfg, model_dim_a: int, model_dim_b: int):
         super().__init__()
         # TODO: we don't need to be passing the entire models to a crosscoder
         # we just need the residual dimensions
@@ -355,7 +350,7 @@ class BetterCrossCoder(nn.Module):
 
         self.encoder_a = nn.Parameter(
             torch.empty(
-                modelA.cfg.d_model,
+                model_dim_a,
                 self.hidden_dim,
                 dtype=torch.bfloat16,
             )
@@ -369,7 +364,7 @@ class BetterCrossCoder(nn.Module):
             torch.nn.init.normal_(
                 torch.empty(
                     self.hidden_dim,
-                    modelA.cfg.d_model,
+                    model_dim_a,
                     dtype=torch.bfloat16,
                 )
             )
@@ -377,7 +372,7 @@ class BetterCrossCoder(nn.Module):
 
         self.decoder_a_bias = nn.Parameter(
             torch.zeros(
-                modelA.cfg.d_model,
+                model_dim_a,
                 dtype=torch.bfloat16,
             )
         )
@@ -392,7 +387,7 @@ class BetterCrossCoder(nn.Module):
 
         self.encoder_b = nn.Parameter(
             torch.empty(
-                modelB.cfg.d_model,
+                model_dim_b,
                 self.hidden_dim,
                 dtype=torch.bfloat16,
             )
@@ -406,7 +401,7 @@ class BetterCrossCoder(nn.Module):
             torch.nn.init.normal_(
                 torch.empty(
                     self.hidden_dim,
-                    modelB.cfg.d_model,
+                    model_dim_b,
                     dtype=torch.bfloat16,
                 )
             )
@@ -414,7 +409,7 @@ class BetterCrossCoder(nn.Module):
 
         self.decoder_b_bias = nn.Parameter(
             torch.zeros(
-                modelB.cfg.d_model,
+                model_dim_b,
                 dtype=torch.bfloat16,
             )
         )
@@ -535,8 +530,8 @@ class BetterCrossCoder(nn.Module):
     def load(
         cls,
         name,
-        modelA,
-        modelB,
+        model_dim_a,
+        model_dim_b,
         path="",
     ):
         # If the files are not in the default save directory, you can specify a path
@@ -549,7 +544,7 @@ class BetterCrossCoder(nn.Module):
         weight_path = save_dir / f"{str(name)}.pt"
 
         cfg = json.load(open(cfg_path, "r"))
-        self = cls(cfg=cfg, modelA=modelA, modelB=modelB)
+        self = cls(cfg=cfg, model_dim_a=model_dim_a, model_dim_b=model_dim_b)
         self.load_state_dict(torch.load(weight_path))
         return self
 
@@ -702,7 +697,7 @@ class ResidualBuffer:
 
 
 class SAE(nn.Module):
-    def __init__(self, cfg: dict[str, Any], model: transformer_lens.HookedTransformer):
+    def __init__(self, cfg: dict[str, Any], model_dim: int):
         super().__init__()
         self.cfg: dict[str, Any] = cfg
         self.save_dir = Path(self.cfg["save_dir"])
@@ -713,7 +708,7 @@ class SAE(nn.Module):
 
         self.encoder = nn.Parameter(
             torch.empty(
-                model.cfg.d_model,
+                model_dim,
                 self.hidden_dim,
                 dtype=torch.bfloat16,
             )
@@ -726,14 +721,14 @@ class SAE(nn.Module):
             torch.nn.init.normal_(
                 torch.empty(
                     self.hidden_dim,
-                    model.cfg.d_model,
+                    model_dim,
                     dtype=torch.bfloat16,
                 )
             )
         )
         self.decoder_bias = nn.Parameter(
             torch.zeros(
-                model.cfg.d_model,
+                model_dim,
                 dtype=torch.bfloat16,
             )
         )
@@ -807,7 +802,7 @@ class SAE(nn.Module):
     def load(
         cls,
         name,
-        model,
+        model_dim,
         path="",
     ):
         # if the files are not in the default save directory, you can specify a path
@@ -820,7 +815,7 @@ class SAE(nn.Module):
         weight_path = save_dir / f"{str(name)}.pt"
 
         cfg = json.load(open(cfg_path, "r"))
-        self = cls(cfg=cfg, model=model)
+        self = cls(cfg=cfg, model_dim=model_dim)
         self.load_state_dict(torch.load(weight_path))
         return self
 

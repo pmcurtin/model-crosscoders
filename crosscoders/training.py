@@ -27,13 +27,13 @@ class CrossCoderTrainer:
         self.step_counter = 0
         self.better = use_better
         if use_better:
-            self.crosscoder = BetterCrossCoder(self.cfg, modelA, modelB).to(
-                self.cfg["device"]
-            )
+            self.crosscoder = BetterCrossCoder(
+                self.cfg, model_dim_a=modelA.cfg.d_model, model_dim_b=modelB.cfg.d_model
+            ).to(self.cfg["device"])
         else:
-            self.crosscoder = CrossCoder(self.cfg, modelA, modelB).to(
-                self.cfg["device"]
-            )
+            self.crosscoder = CrossCoder(
+                self.cfg, model_dim_a=modelA.cfg.d_model, model_dim_b=modelB.cfg.d_model
+            ).to(self.cfg["device"])
         self.buffer = ResidualBuffer(self.cfg, modelA, modelB, dataloader, use_qwen)
 
         self.optimizer = torch.optim.AdamW(
@@ -126,7 +126,7 @@ class SAETrainer:
         self.cfg = cfg
         self.total_steps = self.cfg["num_tokens"] // self.cfg["batch_size"]
         self.step_counter = 0
-        self.SAE = SAE(self.cfg, model).to(self.cfg["device"])
+        self.SAE = SAE(self.cfg, model_dim=model.cfg.d_model).to(self.cfg["device"])
         self.buffer = SAEBuffer(self.cfg, model, dataloader)
 
         self.optimizer = torch.optim.AdamW(

@@ -5,7 +5,7 @@ from transformer_lens import HookedTransformer
 import transformer_lens.utils as utils
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from models import CrossCoder
+from crosscoders.models import CrossCoder
 import torch.nn.functional as F
 from functools import partial
 
@@ -228,8 +228,8 @@ def sae_loss(
     # Load the SAE
     crosscoder = CrossCoder.load(
         sae_model_name,
-        model_a,
-        model_b,
+        model_dim_a=model_a.cfg.d_model,
+        model_dim_b=model_b.cfg.d_model,
         path="./models/some_model/version_1",
     )
     crosscoder.to(device)
