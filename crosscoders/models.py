@@ -479,23 +479,34 @@ class BetterCrossCoder(nn.Module):
         returns: mse losses of all four training objectives
         """
 
-        recons = torch.stack(
+        recons_a = torch.stack(
             [
                 self.forward(x_a, 0, 0),
-                self.forward(x_a, 0, 1),
                 self.forward(x_b, 1, 0),
+            ],
+            dim=0,
+        )
+        recons_b = torch.stack(
+            [
+                self.forward(x_a, 0, 1),
                 self.forward(x_b, 1, 1),
             ],
             dim=0,
         )
 
-        targets = torch.stack([x_a, x_b, x_a, x_b], dim=0)
+        # recons_b: 2 x batch x d_model_b
 
-        l2 = torch.sum(torch.square(targets - recons), dim=-1).mean(dim=-1)
+        targets_a = torch.stack([x_a, x_a], dim=0)
+        targets_b = torch.stack([x_b, x_b], dim=0)
 
-        aa, ab, ba, bb = l2
+        aa, ba = torch.sum(torch.square(targets_a - recons_a), dim=-1).mean(dim=-1)
+        ab, bb = torch.sum(torch.square(targets_b - recons_b), dim=-1).mean(dim=-1)
 
-        l2 = l2.mean()
+        l2 = (aa + ba + ab + bb) / 4
+
+        # aa, ab, ba, bb = l2
+
+        # l2 = l2.mean()
 
         return (l2, aa, ab, ba, bb)
 
@@ -910,3 +921,122 @@ class SAEBuffer:
             self.refresh()
 
         return activations * self.scaling
+
+
+class LinearFeatureTransfer(nn.Module):
+    def __init__(self, cfg, model_dim_a: int, model_dim_b: int):
+        super().__init__()
+        self.cfg: dict[str, Any] = cfg  # config
+
+        self.save_dir = Path(self.cfg["save_dir"])
+        self.save_version: int = self.cfg["save_version"]
+        self.version_save_dir = None
+
+        # Single linear layer for direct feature transfer
+        self.transfer_layer = nn.Parameter(
+            torch.empty(
+                model_dim_a,
+                model_dim_b,
+                dtype=torch.bfloat16,
+            )
+        )
+
+        self.transfer_bias = nn.Parameter(
+            torch.zeros(
+                model_dim_b,
+                dtype=torch.bfloat16,
+            )
+        )
+
+        # Initialize weights
+        nn.init.normal_(self.transfer_layer)
+        self.transfer_layer.data = (
+            self.transfer_layer.data
+            / self.transfer_layer.data.norm(dim=-1, keepdim=True)
+        ) * self.cfg["dec_init_norm"]
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        x: input residual
+        in_model: which model the input is from (0 for model A, 1 for model B)
+        out_model: which model to transfer to (0 for model A, 1 for model B)
+
+        returns: transferred features
+        """
+        # if in_model == 0 and out_model == 1:
+        #    return x @ self.transfer_layer + self.transfer_bias
+        # elif in_model == 1 and out_model == 0:
+        #    return x @ self.transfer_layer.T
+        # else:
+        #    return x  # Identity mapping for same model
+
+        return x @ self.transfer_layer + self.transfer_bias
+
+    def losses(self, x_a: torch.Tensor, x_b: torch.Tensor):
+        """
+        x_a: residuals from model a
+        x_b: residuals from model b
+
+        returns: mse losses for both transfer directions
+        """
+        # Forward pass for both directions
+        # a_to_b = self.forward(x_a, 0, 1)
+        # b_to_a = self.forward(x_b, 1, 0)
+        recon = self.forward(x_a)
+
+        # Calculate MSE losses
+        # l2_a_to_b = torch.sum(torch.square(x_b - a_to_b), dim=-1).mean()
+        # l2_b_to_a = torch.sum(torch.square(x_a - b_to_a), dim=-1).mean()
+
+        # Total loss is average of both directions
+        # l2 = (l2_a_to_b + l2_b_to_a) / 2
+
+        l2 = torch.sum(torch.square(x_b - recon), dim=-1).mean()
+
+        return (l2,)  # (l2, l2_a_to_b, l2_b_to_a, l2_a_to_b, l2_b_to_a)
+
+    def create_save_dir(self):
+        version_list = [
+            int(file.name.split("_")[1])
+            for file in list(self.save_dir.iterdir())
+            if "version" in str(file)
+        ]
+        if len(version_list):
+            version = 1 + max(version_list)
+        else:
+            version = 0
+        self.version_save_dir = self.save_dir / f"version_{version}"
+        self.version_save_dir.mkdir(parents=True)
+
+    def save(self):
+        if self.version_save_dir is None:
+            self.create_save_dir()
+        weight_path = self.version_save_dir / f"{self.save_version}.pt"
+        cfg_path = self.version_save_dir / f"{self.save_version}_cfg.json"
+
+        torch.save(self.state_dict(), weight_path)
+        with open(cfg_path, "w") as f:
+            json.dump(cfg, f)
+
+        print(f"Saved as version {self.save_version} in {self.version_save_dir}")
+        self.save_version += 1
+
+    @classmethod
+    def load(
+        cls,
+        name,
+        model_dim_a,
+        model_dim_b,
+        path="",
+    ):
+        if path == "":
+            save_dir = self.save_dir
+        else:
+            save_dir = Path(path)
+        cfg_path = save_dir / f"{str(name)}_cfg.json"
+        weight_path = save_dir / f"{str(name)}.pt"
+
+        cfg = json.load(open(cfg_path, "r"))
+        self = cls(cfg=cfg, model_dim_a=model_dim_a, model_dim_b=model_dim_b)
+        self.load_state_dict(torch.load(weight_path))
+        return self

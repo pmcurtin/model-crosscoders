@@ -1,4 +1,12 @@
-from .models import CrossCoder, BetterCrossCoder, ResidualBuffer, SAE, SAEBuffer
+from torch.nn import Linear
+from .models import (
+    CrossCoder,
+    BetterCrossCoder,
+    ResidualBuffer,
+    SAE,
+    SAEBuffer,
+    LinearFeatureTransfer,
+)
 from .config import default_cfg
 from torch.nn.utils import clip_grad_norm_
 
@@ -20,20 +28,30 @@ class CrossCoderTrainer:
         use_qwen=True,
         use_wandb=True,
         use_better=False,
+        linear=False,
         cfg=default_cfg,
     ):
         self.cfg = cfg
         self.total_steps = self.cfg["num_tokens"] // self.cfg["batch_size"]
         self.step_counter = 0
         self.better = use_better
-        if use_better:
-            self.crosscoder = BetterCrossCoder(
+        if linear:
+            self.crosscoder = LinearFeatureTransfer(
                 self.cfg, model_dim_a=modelA.cfg.d_model, model_dim_b=modelB.cfg.d_model
             ).to(self.cfg["device"])
         else:
-            self.crosscoder = CrossCoder(
-                self.cfg, model_dim_a=modelA.cfg.d_model, model_dim_b=modelB.cfg.d_model
-            ).to(self.cfg["device"])
+            if use_better:
+                self.crosscoder = BetterCrossCoder(
+                    self.cfg,
+                    model_dim_a=modelA.cfg.d_model,
+                    model_dim_b=modelB.cfg.d_model,
+                ).to(self.cfg["device"])
+            else:
+                self.crosscoder = CrossCoder(
+                    self.cfg,
+                    model_dim_a=modelA.cfg.d_model,
+                    model_dim_b=modelB.cfg.d_model,
+                ).to(self.cfg["device"])
         self.buffer = ResidualBuffer(self.cfg, modelA, modelB, dataloader, use_qwen)
 
         self.optimizer = torch.optim.AdamW(

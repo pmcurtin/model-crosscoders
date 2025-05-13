@@ -10,7 +10,7 @@ at around 2/3 of the way through the model (in the ResidualBuffer class in the
 # import torch
 from torch.utils.data import DataLoader
 from datasets import load_dataset
-from ..lib.training import CrossCoderTrainer
+from crosscoders.training import CrossCoderTrainer
 from transformers import AutoTokenizer
 from transformer_lens import HookedTransformer
 
@@ -31,7 +31,7 @@ cfg = {
     "log_every": 100,
     "save_every": 5000,
     "dec_init_norm": 0.05,
-    "save_dir": "models/pythia_crosscoder",
+    "save_dir": "../models/pythia_crosscoder_better",
     "save_version": 0,
 }
 
@@ -88,5 +88,7 @@ model_b = HookedTransformer.from_pretrained_no_processing(
 for param in model_b.parameters():
     param.requires_grad = False
 
-t = CrossCoderTrainer(model_a, model_b, dl, use_qwen=False, use_wandb=True, cfg=cfg)
+t = CrossCoderTrainer(
+    model_a, model_b, dl, use_qwen=False, use_wandb=True, cfg=cfg, use_better=True
+)
 t.train()

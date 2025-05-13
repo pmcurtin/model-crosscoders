@@ -6,7 +6,7 @@ from transformers import AutoModel, AutoTokenizer
 from transformers import BitsAndBytesConfig
 from typing import Callable
 import torch
-from crosscoders.models import CrossCoder
+from crosscoders.models import BetterCrossCoder, CrossCoder
 import torch.nn.functional as F
 from delphi.config import CacheConfig, ConstructorConfig, RunConfig, SamplerConfig
 from delphi.utils import assert_type
@@ -51,26 +51,33 @@ def delphi_autointerp(
     right: bool,
     layer: int,
     run_name: str,
+    better: bool,
 ):
     def override_load_hooks_sparse_coders(
         model: AutoModel, cfg: RunConfig, compile: bool = False
     ) -> tuple[dict[str, Callable], bool]:
-        coder = CrossCoder.load(
+        coder_model = BetterCrossCoder if better else CrossCoder
+
+        coder = coder_model.load(
             checkpoint,
             model_dim_a=model_dim_a,
             model_dim_b=model_dim_b,
             path=model_path,
-        )
+        ).to("cuda")
 
-        W_enc = coder.encoder.data
-        if not right:
-            W_enc = W_enc[:model_dim_a, :].to("cuda")
+        if better:
+            encode = lambda x: coder.encode(x, right)
+
         else:
-            W_enc = W_enc[model_dim_a:, :].to("cuda")
-        b_enc = coder.encoder_bias.data.to("cuda")
+            W_enc = coder.encoder.data
+            if not right:
+                W_enc = W_enc[:model_dim_a, :]  # .to("cuda")
+            else:
+                W_enc = W_enc[model_dim_a:, :]  # .to("cuda")
+            b_enc = coder.encoder_bias.data  # .to("cuda")
 
-        def encode(x):
-            return F.relu(coder.topk_constraint(x @ W_enc + b_enc))
+            # def encode(x):
+            encode = lambda x: F.relu(coder.topk_constraint(x @ W_enc + b_enc))
 
         transcoder = False
 
@@ -194,7 +201,7 @@ def delphi_autointerp(
             log_results(scores_path, visualize_path, run_cfg.hookpoints)
 
     cache_cfg = CacheConfig(
-        dataset_repo="EleutherAI/fineweb-edu-dedup-10b",
+        dataset_repo="../datasets/pile-subset",  # "EleutherAI/fineweb-edu-dedup-10b",
         dataset_split="train[:50000]",
         dataset_column="text",
         batch_size=8,

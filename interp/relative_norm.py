@@ -2,17 +2,18 @@ import torch
 import matplotlib.pyplot as plt
 import seaborn as sns
 import os
+import pandas as pd
 
 # Import and grab decoder weights
-CROSSCODER_RUN_NAME = "copper-firefly-88"
-MODEL_PATH = "./models/gpt2_crosscoder/version_2/9.pt"
+CROSSCODER_RUN_NAME = "flowing-durian-75"
+MODEL_PATH = "../models/some_model/version_1/9.pt"
 
-MODEL_A_NAME = "gpt2"
-MODEL_B_NAME = "DialoGPT-medium"
+MODEL_A_NAME = "Qwen2.5-0.5B"
+MODEL_B_NAME = "Qwen2.5-0.5B-Instruct"
 
 better = False
 
-model_a_dim = 768
+model_a_dim = 896
 
 model = torch.load(MODEL_PATH, map_location=torch.device("cpu"))
 
@@ -42,6 +43,15 @@ else:
 # norms = decoder_reshaped.norm(dim=-1)
 # relative_norms = norms[:, 1] / norms.sum(dim=-1)
 relative_norms = decoder_b_norms / (decoder_a_norms + decoder_b_norms)
+
+pd.DataFrame(
+    {
+        "latent_idx": range(len(relative_norms)),
+        "model_a_norm": decoder_a_norms,
+        "model_b_norm": decoder_b_norms,
+        "relative_norm": relative_norms,
+    }
+).to_csv("norm_strengths.csv", index=False)
 
 # Make histogram to visualize the distribution of the normalized L2 norms
 plt.figure(figsize=(10, 6))

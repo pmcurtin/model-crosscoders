@@ -4,6 +4,7 @@ if __name__ == "__main__":
     delphi_autointerp(
         model_path="../models/pythia_crosscoder/version_0",
         checkpoint="9",
+        better=False,
         model_a_str="EleutherAI/pythia-160m",
         model_dim_a=768,
         model_b_str="EleutherAI/pythia-410m-v0",

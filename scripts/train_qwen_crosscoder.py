@@ -1,7 +1,7 @@
 import torch
 from torch.utils.data import DataLoader
 from datasets import load_dataset
-from ..lib.training import CrossCoderTrainer
+from crosscoders.training import CrossCoderTrainer
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from transformer_lens import HookedTransformer
 
@@ -80,5 +80,5 @@ model_b = HookedTransformer.from_pretrained(
 for param in model_b.parameters():
     param.requires_grad = False
 
-t = CrossCoderTrainer(model_a, model_b, dl, use_wandb=True, use_better=False)
+t = CrossCoderTrainer(model_a, model_b, dl, use_wandb=True, use_better=False, cfg=cfg)
 t.train()
