@@ -2,7 +2,7 @@
 
 ## Environment installation
 
-I recommend using [`uv`](https://docs.astral.sh/uv/). It's easy to [install](https://docs.astral.sh/uv/getting-started/installation/). 
+We recommend using [`uv`](https://docs.astral.sh/uv/). It's easy to [install](https://docs.astral.sh/uv/getting-started/installation/). 
 
 Then: `uv venv --python 3.11` to create a python 3.11 virtual environment.
 
@@ -10,16 +10,24 @@ Then: `uv venv --python 3.11` to create a python 3.11 virtual environment.
 
 You can also just use `python -m venv` and `pip`.
 
-## Relevant papers
+### Setting up `crosscoders`
 
-[Universal Sparse Autoencoders](https://arxiv.org/pdf/2502.03714)
+After installing the environment, you should install our editable `crosscoders` package. This is achieved by running: `uv pip install -e .` or `pip install -e .` in the activated environment.
 
-[Scaling and evaluating sparse autoencoders](https://arxiv.org/pdf/2406.04093) (Good for implementation tips)
+## Important scripts
 
-[k-Sparse Autoencoders](https://arxiv.org/pdf/1312.5663) (details on TopK autoencoders, which we should implement rather than ReLU autoencoders)
+The `scripts/` directory contains training scripts for the various crosscoders we trained. 
+
+The `perf/` directory contains scripts for evaluating the loss recovered by various crosscoder models. 
+
+The `interp/` directory contains scripts for evaluating crosscoder interpretability using delphi, and creating the relative norm strength plots. 
 
 ## Relevant codebases
 
-[delphi](https://github.com/EleutherAI/delphi) (for doing feature explanations)
+### Delphi
 
-[Neel Nanda's crosscoders](https://github.com/neelnanda-io/Crosscoders) (implementation inspiration)
+In the `interp/` directory, the `run_delphi_*` scripts require [delphi](https://github.com/EleutherAI/delphi) to be installed in the environment.
+
+### Reference Crosscoder implementation
+
+We loosely followed the training architecture established in [Neel Nanda's crosscoders](https://github.com/neelnanda-io/Crosscoders) repositor, but wrote our own crosscoder classes (in `crosscoders/models.py`) and trainers to accomodate crosscoding between two models.

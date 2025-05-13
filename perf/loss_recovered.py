@@ -258,8 +258,10 @@ def crosscoder_loss(
 
         if pure:
             corrupted_copy = torch.zeros_like(corrupted_residual_component)
+
         else:
             corrupted_copy = corrupted_residual_component
+            model_residuals = torch.zeros_like(model_residuals)
 
         if right:
             x = torch.cat((model_residuals, corrupted_copy), dim=-1)

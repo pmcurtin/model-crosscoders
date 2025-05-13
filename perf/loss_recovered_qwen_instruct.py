@@ -24,12 +24,12 @@ loss_s = crosscoder_loss(
     model_b_layer=18,
     model_a_dim=896,
     sae_model_name=9,
-    sae_model_path="../models/qwen_crosscoder_better/version_3",  # "../models/some_model/version_1",  #
+    sae_model_path="../models/some_model/version_1",  # "../models/qwen_crosscoder_better/version_3",  #
     dataset_name="EleutherAI/fineweb-edu-dedup-10b",
     dataset_split="train[:2500]",
     right=True,
-    pure=True,
-    better=True,
+    pure=False,
+    better=False,
 )
 
 print(f"Loss reconstructed: {(loss_a - loss_s) / (loss_a - loss_n):.2f}")

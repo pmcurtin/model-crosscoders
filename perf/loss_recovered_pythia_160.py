@@ -28,7 +28,7 @@ loss_s = crosscoder_loss(
     dataset_name="EleutherAI/fineweb-edu-dedup-10b",
     dataset_split="train[:2500]",
     right=False,
-    pure=True,
+    pure=False,
     better=False,
 )
 
