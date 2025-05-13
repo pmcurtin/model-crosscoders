@@ -5,13 +5,13 @@ import os
 import pandas as pd
 
 # Import and grab decoder weights
-CROSSCODER_RUN_NAME = "flowing-durian-75"
-MODEL_PATH = "../models/some_model/version_1/9.pt"
+CROSSCODER_RUN_NAME = ""  # "flowing-durian-75"
+MODEL_PATH = "../models/qwen_crosscoder_better/version_3/9.pt"  # "../models/some_model/version_1/9.pt"
 
 MODEL_A_NAME = "Qwen2.5-0.5B"
 MODEL_B_NAME = "Qwen2.5-0.5B-Instruct"
 
-better = False
+better = True
 
 model_a_dim = 896
 
@@ -54,7 +54,7 @@ pd.DataFrame(
 ).to_csv("norm_strengths.csv", index=False)
 
 # Make histogram to visualize the distribution of the normalized L2 norms
-plt.figure(figsize=(10, 6))
+plt.figure(figsize=(10, 4))
 sns.histplot(data=relative_norms, bins=100)
 
 # Add titles and labels
