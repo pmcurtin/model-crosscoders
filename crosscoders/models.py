@@ -29,9 +29,6 @@ class CrossCoder(nn.Module):
         model_dim_b: int,
     ):
         super().__init__()
-        # TODO: we don't need to be passing the entire models to a crosscoder
-        # we just need the residual dimensions
-
         self.cfg: dict[str, Any] = cfg  # config
 
         self.save_dir = Path(self.cfg["save_dir"])
@@ -40,7 +37,7 @@ class CrossCoder(nn.Module):
 
         self.hidden_dim = int(self.cfg["dict_size"])  # pyright: ignore
 
-        self.topk = self.cfg["topk"]  # idk
+        self.topk = self.cfg["topk"] 
 
         self.encoder = nn.Parameter(
             torch.empty(
@@ -168,15 +165,6 @@ class CrossCoder(nn.Module):
 
         return self.act(self.topk_constraint(x @ self.encoder + self.encoder_bias))
 
-        # has two encoders, so m indicates which to use
-        x, mu, std = self.normalize(x)
-        raw_enc: torch.Tensor = (x @ (self.encoder_a, self.encoder_b)[m]) + (
-            self.b_encoder_a,
-            self.b_encoder_b,
-        )[m]  # self.encoders[m](x)  # pyright: ignore
-        # return self.act(self.topk_constraint(raw_enc)), mu, std  # pyright: ignore
-        return self.act(raw_enc), mu, std
-
     def decode(
         self,
         x: torch.Tensor,  # , m: int, mu: torch.Tensor, std: torch.Tensor
@@ -190,11 +178,6 @@ class CrossCoder(nn.Module):
 
         return x @ self.decoder + self.decoder_bias
 
-        return (
-            x @ (self.decoder_a, self.decoder_b)[m]
-            + (self.b_decoder_a, self.b_decoder_b)[m]
-        ) * std + mu
-
     def topk_constraint(self, x: torch.Tensor) -> torch.Tensor:
         # DOES THIS WORK?
         # get topk
@@ -207,8 +190,6 @@ class CrossCoder(nn.Module):
         result.scatter_(-1, topk.indices, topk.values)
         return result
 
-        # return x.scatter(index=torch.argsort(x, dim=1)[:, : -self.topk], dim=1, value=0)
-
     def forward(self, x: torch.Tensor) -> torch.Tensor:  # encode_m: int, decode_m: int
         """
         x: input residual
@@ -219,11 +200,6 @@ class CrossCoder(nn.Module):
         """
 
         return self.decode(self.encode(x))
-
-        latents, mu, std = self.encode(x, encode_m)  # pyright: ignore
-        decoded = self.decode(latents, decode_m, mu, std)
-
-        return decoded
 
     def losses(self, x_a: torch.Tensor, x_b: torch.Tensor):
         """
@@ -255,28 +231,7 @@ class CrossCoder(nn.Module):
 
         l0 = (acts > 0).float().sum(-1).mean()
 
-        # acts_a, mu_a, std_a = self.encode(x_a, 0)
-        # acts_b, mu_b, std_b = self.encode(x_b, 1)
-
-        # aa = self.decode(acts_a, 0, mu_a, std_a)
-        # ab = self.decode(acts_a, 1, mu_a, std_a)
-        # ba = self.decode(acts_b, 0, mu_b, std_b)
-        # bb = self.decode(acts_b, 1, mu_b, std_b)
-
-        # dec_norm = self.decoder_a.norm(dim=-1) + self.decoder_b.norm(dim=-1)
-
-        # l1 = ((acts_a + acts_b) @ dec_norm).mean(0)
-
-        # l0 = (acts_a > 0).float().sum(-1).mean() + (acts_b > 0).float().sum(
-        #     -1
-        # ).mean() / 2
-
         return (
-            # l2 losses on each pathway
-            # F.mse_loss(aa, x_a),
-            # F.mse_loss(ab, x_b),
-            # F.mse_loss(ba, x_a),
-            # F.mse_loss(bb, x_b),
             l2,
             l1,
             l0,
@@ -335,9 +290,6 @@ class CrossCoder(nn.Module):
 class BetterCrossCoder(nn.Module):
     def __init__(self, cfg, model_dim_a: int, model_dim_b: int):
         super().__init__()
-        # TODO: we don't need to be passing the entire models to a crosscoder
-        # we just need the residual dimensions
-
         self.cfg: dict[str, Any] = cfg  # config
 
         self.save_dir = Path(self.cfg["save_dir"])
@@ -346,7 +298,7 @@ class BetterCrossCoder(nn.Module):
 
         self.hidden_dim = int(self.cfg["dict_size"])  # pyright: ignore
 
-        self.topk = self.cfg["topk"]  # idk
+        self.topk = self.cfg["topk"]
 
         self.encoder_a = nn.Parameter(
             torch.empty(
